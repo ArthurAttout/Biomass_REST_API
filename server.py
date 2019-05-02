@@ -1,7 +1,8 @@
+#!/usr/bin/env python
+
 # REST API
 
 from flask import Flask
-from keras.preprocessing.image import ImageDataGenerator
 import numpy as np
 from PIL import Image
 from io import BytesIO
@@ -9,11 +10,12 @@ import mysql.connector
 import json
 import base64
 import os, sys
-from keras.models import load_model
 from flask import request
-import urllib.request
+import urllib2
+from werkzeug.serving import run_simple
 
 app = Flask(__name__)
+app.debug = True
 
 @app.route('/identify', methods = ['POST'])
 def identifyHandler():
@@ -23,19 +25,18 @@ def identifyHandler():
 	print(url_host)
 	
 	#Forward request to ML component
-	req = urllib.request.Request("http://192.168.1.85:5001")
+	req = urllib2.Request("http://192.168.1.85:5001/identify")
 	req.add_header('Content-Type', 'application/json; charset=utf-8')
 	jsondata = json.dumps(content)
 	jsondataasbytes = jsondata.encode('utf-8')   # needs to be bytes
 	req.add_header('Content-Length', len(jsondataasbytes))
-	response = urllib.request.urlopen(req, jsondataasbytes)
-	data = response.read()
-	encoding = response.info().get_content_charset('utf-8')
-	JSON_object = json.loads(data.decode(encoding))
+	response = urllib2.urlopen(req, jsondataasbytes)
+	
+	JSON_object = json.load(response)
 	
 	if(max(JSON_object['predictions']) > 0.87):
 		# If certitude > 87%, return object as-is
-		return JSON_object
+		return json.dumps(JSON_object)
 	else:
 		# Else, ask for geolocation
 		response = {
@@ -75,7 +76,7 @@ def geolocationHandler():
 	
 	#Forward request to ML component with classes
 	
-	req = urllib.request.Request("http://192.168.1.85:5001")
+	req = urllib2.Request("http://192.168.1.85:5001/identifyWithMask")
 	req.add_header('Content-Type', 'application/json; charset=utf-8')
 	payload = {
 		"url":url_host,
@@ -85,12 +86,12 @@ def geolocationHandler():
 	jsondata = json.dumps(payload)
 	jsondataasbytes = jsondata.encode('utf-8')   # needs to be bytes
 	req.add_header('Content-Length', len(jsondataasbytes))
-	response = urllib.request.urlopen(req, jsondataasbytes)
-	data = response.read()
-	encoding = response.info().get_content_charset('utf-8')
-	JSON_object = json.loads(data.decode(encoding))
+	response = urllib2.urlopen(req, jsondataasbytes)
+	JSON_object = json.load(response)
 	
 	if(max(JSON_object['predictions']) > 0.87):
 		# If certitude > 87%, return object as-is
 		return JSON_object
 	
+if __name__ == '__main__':
+    app.run(host = '0.0.0.0',port=5000)

@@ -17,6 +17,23 @@ from werkzeug.serving import run_simple
 app = Flask(__name__)
 app.debug = True
 
+mydb = mysql.connector.connect(
+	host="192.168.1.67",
+	user="python",
+	passwd="python",
+	database="biomass_database"
+)
+
+def get_biomass_name_from_class(class_number):
+	cursor = mydb.cursor()
+	query = '''	
+		select name from biomass
+		where class_ML = {}
+	'''
+	cursor.execute(query.format(class_number))
+	result = cursor.fetchall()
+	return [x[0] for x in result][0]
+
 @app.route('/identify', methods = ['POST'])
 def identifyHandler():
 	content = request.get_json()
@@ -36,11 +53,18 @@ def identifyHandler():
 	
 	if(max(JSON_object['predictions']) > 0.87):
 		# If certitude > 87%, return object as-is
-		return json.dumps(JSON_object)
+		print("Getting biomass name for {}".format(JSON_object['likely_class']))
+		biomass_name = get_biomass_name_from_class(JSON_object['likely_class'])
+		response = {
+			"result" : "OK",
+			"biomass_name": biomass_name,
+			"certitude" : max(JSON_object['predictions'])
+		}
+		return json.dumps(response)
 	else:
 		# Else, ask for geolocation
 		response = {
-			"error":"BAD_CERTITUDE"
+			"result":"BAD_CERTITUDE"
 		}
 		return json.dumps(response)
 	
@@ -55,12 +79,7 @@ def geolocationHandler():
 	print("LatLng : {} - {}".format(latitude,longitude))
 	
 	#Get list of excluded classes
-	mydb = mysql.connector.connect(
-	  host="192.168.1.67",
-	  user="python",
-	  passwd="python",
-	  database="biomass_database"
-	)
+	
 	cursor = mydb.cursor()
 	query = '''	
 		select class_ML from biomass
@@ -91,7 +110,19 @@ def geolocationHandler():
 	
 	if(max(JSON_object['predictions']) > 0.87):
 		# If certitude > 87%, return object as-is
-		return JSON_object
+		biomass_name = get_biomass_name_from_class(JSON_object['likely_class'])
+		response = {
+			"result" : "OK",
+			"biomass_name": biomass_name,
+			"certitude" : max(JSON_object['predictions'])
+		}
+		return json.dumps(JSON_object)
+	else:
+		# Still don't know.
+		response = {
+			"result":"BAD_CERTITUDE"
+		}
+		return json.dumps(response)
 	
 if __name__ == '__main__':
     app.run(host = '0.0.0.0',port=5000)

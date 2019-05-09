@@ -33,6 +33,20 @@ def get_biomass_name_from_class(class_number):
 	cursor.execute(query.format(class_number))
 	result = cursor.fetchall()
 	return [x[0] for x in result][0]
+	
+	
+def get_valorizations_for_biomass(class_number):
+	cursor = mydb.cursor()
+	query = '''
+		SELECT FORMAT(cellulose,0),FORMAT(hemicellulose,0),FORMAT(lignine,0),
+		(select shortname from valorisation where id = FK_Valorisation) as valorization
+		FROM biomass_database.matrix_valorisation 
+		where FK_Biomass = {}
+		order by cellulose, hemicellulose, lignine
+	'''
+	cursor.execute(query.format(class_number))
+	result = cursor.fetchall()
+	return result
 
 @app.route('/identify', methods = ['POST'])
 def identifyHandler():
@@ -51,14 +65,15 @@ def identifyHandler():
 	
 	JSON_object = json.load(response)
 	
-	if(max(JSON_object['predictions']) > 0.87):
-		# If certitude > 87%, return object as-is
+	if(max(JSON_object['predictions']) > 0.95):
+		# If certitude > 95%, return object as-is
 		print("Getting biomass name for {}".format(JSON_object['likely_class']))
 		biomass_name = get_biomass_name_from_class(JSON_object['likely_class'])
 		response = {
 			"result" : "OK",
 			"biomass_name": biomass_name,
-			"certitude" : max(JSON_object['predictions'])
+			"certitude" : max(JSON_object['predictions']),
+			"valorizations" : get_valorizations_for_biomass(JSON_object['likely_class'])
 		}
 		return json.dumps(response)
 	else:
@@ -75,6 +90,7 @@ def geolocationHandler():
 	url_host = content['url']
 	latitude = content['latitude']
 	longitude = content['longitude']
+	crop = content['crop']
 	
 	print("LatLng : {} - {}".format(latitude,longitude))
 	
@@ -99,22 +115,24 @@ def geolocationHandler():
 	req.add_header('Content-Type', 'application/json; charset=utf-8')
 	payload = {
 		"url":url_host,
-		"classes_to_exclude":classes_excluded
+		"classes_to_exclude":classes_excluded,
+		"crop":crop,
 	}
-	
+	print("Sending payload to ML {}".format(payload))
 	jsondata = json.dumps(payload)
 	jsondataasbytes = jsondata.encode('utf-8')   # needs to be bytes
 	req.add_header('Content-Length', len(jsondataasbytes))
 	response = urllib2.urlopen(req, jsondataasbytes)
 	JSON_object = json.load(response)
 	
-	if(max(JSON_object['predictions']) > 0.87):
-		# If certitude > 87%, return object as-is
+	if(max(JSON_object['predictions']) > 0.95):
+		# If certitude > 95%, return object as-is
 		biomass_name = get_biomass_name_from_class(JSON_object['likely_class'])
 		response = {
 			"result" : "OK",
 			"biomass_name": biomass_name,
-			"certitude" : max(JSON_object['predictions'])
+			"certitude" : max(JSON_object['predictions']),
+			"valorizations" : get_valorizations_for_biomass(JSON_object['likely_class'])
 		}
 		return json.dumps(JSON_object)
 	else:

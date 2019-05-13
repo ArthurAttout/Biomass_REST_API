@@ -10,9 +10,13 @@ import mysql.connector
 import json
 import base64
 import os, sys
+import asyncio
 from flask import request
-import urllib2
+import urllib.request
 from werkzeug.serving import run_simple
+from websocket import create_connection
+import datetime
+
 
 app = Flask(__name__)
 app.debug = True
@@ -47,6 +51,25 @@ def get_valorizations_for_biomass(class_number):
 	cursor.execute(query.format(class_number))
 	result = cursor.fetchall()
 	return result
+	
+def add_to_history(biomass_id, img_path, certitude):
+	cursor = mydb.cursor()
+	query_insert_image = '''
+		INSERT INTO report_image (path) 
+		VALUES ('{}');
+	'''
+	cursor.execute(query_insert_image.format(img_path))
+	image_id = cursor.lastrowid
+	mydb.commit()
+	
+	query_insert_history = '''
+		INSERT INTO history (date, FK_Biomass, FK_Image, certitude) 
+		VALUES ('{0}', '{1}', '{2}', '{3}');
+	'''
+	today = datetime.datetime.now()
+	cursor.execute(query_insert_history.format(today, biomass_id, image_id, certitude))
+	mydb.commit()
+	return cursor.lastrowid
 
 @app.route('/identify', methods = ['POST'])
 def identifyHandler():
@@ -56,26 +79,46 @@ def identifyHandler():
 	print(url_host)
 	
 	#Forward request to ML component
-	req = urllib2.Request("http://192.168.1.85:5001/identify")
+	
+	req = urllib.request.Request("http://192.168.1.85:5001/identify")
 	req.add_header('Content-Type', 'application/json; charset=utf-8')
 	jsondata = json.dumps(content)
-	jsondataasbytes = jsondata.encode('utf-8')   # needs to be bytes
+	jsondataasbytes = jsondata.encode('utf-8')
 	req.add_header('Content-Length', len(jsondataasbytes))
-	response = urllib2.urlopen(req, jsondataasbytes)
 	
-	JSON_object = json.load(response)
+	print("DECODE")
+	response = urllib.request.urlopen(req, jsondataasbytes).read().decode("utf-8")
+	JSON_object = json.loads(response)
+	
 	
 	if(max(JSON_object['predictions']) > 0.95):
 		# If certitude > 95%, return object as-is
-		print("Getting biomass name for {}".format(JSON_object['likely_class']))
-		biomass_name = get_biomass_name_from_class(JSON_object['likely_class'])
-		response = {
+		biomass_id = JSON_object['likely_class']
+		print("Getting biomass name for {}".format(biomass_id))
+		biomass_name = get_biomass_name_from_class(biomass_id)
+		certitude =  max(JSON_object['predictions'])
+		response_client = {
 			"result" : "OK",
 			"biomass_name": biomass_name,
-			"certitude" : max(JSON_object['predictions']),
+			"certitude" : certitude,
 			"valorizations" : get_valorizations_for_biomass(JSON_object['likely_class'])
 		}
-		return json.dumps(response)
+		
+		new_id = add_to_history(biomass_id,url_host,certitude)
+		payload_dashboard = {
+			"type":"NEW_HISTORY",
+			"element":{
+				"id":new_id,
+				"date": str(datetime.datetime.now()),
+				"name": biomass_name,
+				"certitude": certitude
+			}
+		}
+		ws = create_connection("ws://192.168.1.85:8080/")
+		ws.send(json.dumps(payload_dashboard))
+		ws.close()
+		return json.dumps(response_client)
+		
 	else:
 		# Else, ask for geolocation
 		response = {
@@ -111,7 +154,7 @@ def geolocationHandler():
 	
 	#Forward request to ML component with classes
 	
-	req = urllib2.Request("http://192.168.1.85:5001/identifyWithMask")
+	req = urllib.request.Request("http://192.168.1.85:5001/identifyWithMask")
 	req.add_header('Content-Type', 'application/json; charset=utf-8')
 	payload = {
 		"url":url_host,
@@ -122,8 +165,8 @@ def geolocationHandler():
 	jsondata = json.dumps(payload)
 	jsondataasbytes = jsondata.encode('utf-8')   # needs to be bytes
 	req.add_header('Content-Length', len(jsondataasbytes))
-	response = urllib2.urlopen(req, jsondataasbytes)
-	JSON_object = json.load(response)
+	response = urllib.request.urlopen(req, jsondataasbytes).read().decode('utf-8')
+	JSON_object = json.loads(response)
 	
 	if(max(JSON_object['predictions']) > 0.95):
 		# If certitude > 95%, return object as-is
